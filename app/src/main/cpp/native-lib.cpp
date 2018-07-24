@@ -6,6 +6,7 @@
 extern "C"{
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libswsacle/swscale.h>
 #include <libavcodec/jni.h>
 }
 #include<iostream>
@@ -158,8 +159,15 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     /* Read Frame Data */
     AVPacket *pkt = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
+
+    /*  */
+    SwsContext* vctx = NULL;
+    int outWidth = 1280;
+    int outHeight = 720;
+
     long long start = GetNowMs();
     int frameCount = 0;
+    char* rgb = new char[1920*1080*4];
     for(;;)
     {
         /* Record each per 3 seconds */
@@ -205,9 +213,44 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
             if(cc == vc)
             {
                 frameCount++;
+                vctx = sws_getCachedContext(vctx,
+                                            frame->width,
+                                            frame->height,
+                                            (AVPixelFormat)frame->format,
+                                            outWidth,
+                                            outHeight,
+                                            AV_PIX_FMT_RGBA,
+                                            SWS_FAST_BILINEAR,
+                                            0,
+                                            0,
+                                            0
+                );
+                if( !vctx )
+                {
+                    LOGW("sws_getCachedContext failed!");
+                }
+                else
+                {
+                    uint8_t* data[AV_NUM_DATA_POINTERS] = {0};
+                    data[0] = (uint8_t*)rgb;
+                    int lines[AV_NUM_DATA_POINTERS] = {0};
+                    lines[0] = outWidth*4;
+                    int h = sws_scale(
+                        vctx,
+                        (const uint8_t**)frame->data,
+                        frame->linesize,
+                        0,
+                        frame->height,
+                        data, 
+                        lines
+                    );
+                    LOGW("sws_scale = %d", h);
+                }
             }
         }
     }
+    delete rgb;
+
     avformat_close_input(&ic);
     return env->NewStringUTF(hello.c_str());
 }
