@@ -7,6 +7,7 @@ extern "C"{
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswsacle/swscale.h>
+#include <libswresample/swresample.h>
 #include <libavcodec/jni.h>
 }
 #include<iostream>
@@ -165,9 +166,28 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     int outWidth = 1280;
     int outHeight = 720;
 
+    SwrContext* actx = swr_alloc();
+    actx = swr_alloc_set_opts(
+        actx,
+        av_get_default_channel_layout(2/*ac->channels*/),
+        AV_SAMPLE_FMT_S16,
+        ac->sample_rate,
+        av_get_default_channel_layout(ac->channels),
+        ac->sample_format, 
+        ac->sample_rate, 0, 0
+    );
+    re = swr_init(actx);
+    if( re != 0 )
+    {
+        LOGW("swr_init failed!");
+    } else {
+        LOGW("swr_init success!");
+    }
+
     long long start = GetNowMs();
     int frameCount = 0;
     char* rgb = new char[1920*1080*4];
+    char* pcm = new char[48000*4*2];
     for(;;)
     {
         /* Record each per 3 seconds */
@@ -231,7 +251,7 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
                 }
                 else
                 {
-                    uint8_t* data[AV_NUM_DATA_POINTERS] = {0};
+                    uint8_t* data[AV_NUM_DATA_POINTERS/*8*/] = {0};
                     data[0] = (uint8_t*)rgb;
                     int lines[AV_NUM_DATA_POINTERS] = {0};
                     lines[0] = outWidth*4;
@@ -247,9 +267,24 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
                     LOGW("sws_scale = %d", h);
                 }
             }
+            else // Audio
+            {   
+                uint8_t* out[2] = {0};
+                out[0] = (uint8_t*)pcm;
+                // Audio Resample
+                int len = swr_convert(
+                    actx, 
+                    out,
+                    frame->nb_samples, /* how many samples, usually 1024 */
+                    (const uint8_t*)frame->data,
+                    frame->nb_samples,
+                );
+                LOGW("swr_convert = %d", len);
+            }
         }
     }
     delete rgb;
+    delete pcm;
 
     avformat_close_input(&ic);
     return env->NewStringUTF(hello.c_str());
