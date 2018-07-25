@@ -1,6 +1,8 @@
 #include <jni.h>
 #include <string>
 #include <android/log.h>
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,"testff",__VA_ARGS__)
 
 extern "C"{
@@ -44,6 +46,34 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     std::string hello = "Hello from C++ ";
     hello += avcodec_configuration();
 
+    return env->NewStringUTF(hello.c_str());
+}
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_aplay_testffmpeg_MainActivity_Open(JNIEnv *env, jobject instance, jstring url_,
+                                        jobject handle) {
+    const char *url = env->GetStringUTFChars(url_, 0);
+
+    // TODO
+    FILE *fp = fopen(url,"rb");
+    if(!fp)
+    {
+        LOGW("File %s open failed!",url);
+    }
+    else
+    {
+        LOGW("File %s open succes!",url);
+        fclose(fp);
+    }
+    env->ReleaseStringUTFChars(url_, url);
+    return true;
+}
+extern "C"
+JNIEXPORT void JNICALL
+Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jobject surface) {
+    const char *path = env->GetStringUTFChars(url_, 0);
+
+    // TODO
     /* Initialize all */
     av_register_all();
 
@@ -59,7 +89,7 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     if(re != 0)
     {
         LOGW("avformat_open_input failed!:%s",av_err2str(re));
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
     LOGW("avformat_open_input %s success!",path);
 
@@ -116,7 +146,7 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     if(!codec)
     {
         LOGW("avcodec_find failed!");
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
     /* Decoder Initialization */
     AVCodecContext *vc = avcodec_alloc_context3(codec);
@@ -131,7 +161,7 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     if(re != 0)
     {
         LOGW("avcodec_open2 video failed!");
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
 
     //////////////////////////////////////////////////////////
@@ -143,7 +173,7 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     if(!acodec)
     {
         LOGW("avcodec_find failed!");
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
     /* Decoder Initialization */
     AVCodecContext *ac = avcodec_alloc_context3(acodec);
@@ -154,7 +184,7 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     if(re != 0)
     {
         LOGW("avcodec_open2  audio failed!");
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
 
     /* Read Frame Data */
@@ -168,13 +198,13 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
 
     SwrContext* actx = swr_alloc();
     actx = swr_alloc_set_opts(
-        actx,
-        av_get_default_channel_layout(2/*ac->channels*/),
-        AV_SAMPLE_FMT_S16,
-        ac->sample_rate,
-        av_get_default_channel_layout(ac->channels),
-        ac->sample_format, 
-        ac->sample_rate, 0, 0
+            actx,
+            av_get_default_channel_layout(2/*ac->channels*/),
+            AV_SAMPLE_FMT_S16,
+            ac->sample_rate,
+            av_get_default_channel_layout(ac->channels),
+            ac->sample_format,
+            ac->sample_rate, 0, 0
     );
     re = swr_init(actx);
     if( re != 0 )
@@ -188,6 +218,15 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     int frameCount = 0;
     char* rgb = new char[1920*1080*4];
     char* pcm = new char[48000*4*2];
+
+
+    /*  */
+    ANativeWindow* nwin = ANativeWindow_fromSurface(env, surface);
+    int vWidth = vc->width;
+    int vHeight = vc->height;
+    ANativeWindow_setBuffersGeometry( nwin, vWidth, vHeight, WINDOW_FORMAT_RGBA_8888 );
+    ANativeWindow_Buffer wbuf;
+
     for(;;)
     {
         /* Record each per 3 seconds */
@@ -256,28 +295,37 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
                     int lines[AV_NUM_DATA_POINTERS] = {0};
                     lines[0] = outWidth*4;
                     int h = sws_scale(
-                        vctx,
-                        (const uint8_t**)frame->data,
-                        frame->linesize,
-                        0,
-                        frame->height,
-                        data, 
-                        lines
+                            vctx,
+                            (const uint8_t**)frame->data,
+                            frame->linesize,
+                            0,
+                            frame->height,
+                            data,
+                            lines
                     );
                     LOGW("sws_scale = %d", h);
+
+                    if( h > 0 )
+                    {
+                        ANativeWindow_lock( nwin, &wbuf, 0 );
+                        uint8_t* dst = (uint8_t*) wbuf.bits;
+                        memcpy( dst, rgb, outWidth*outHeight*4 );
+                        ANativeWindow_unlockAndPost( nwin );
+                    }
+
                 }
             }
             else // Audio
-            {   
+            {
                 uint8_t* out[2] = {0};
                 out[0] = (uint8_t*)pcm;
                 // Audio Resample
                 int len = swr_convert(
-                    actx, 
-                    out,
-                    frame->nb_samples, /* how many samples, usually 1024 */
-                    (const uint8_t*)frame->data,
-                    frame->nb_samples,
+                        actx,
+                        out,
+                        frame->nb_samples, /* how many samples, usually 1024 */
+                        (const uint8_t*)frame->data,
+                        frame->nb_samples,
                 );
                 LOGW("swr_convert = %d", len);
             }
@@ -287,25 +335,6 @@ Java_aplay_testffmpeg_MainActivity_stringFromJNI(
     delete pcm;
 
     avformat_close_input(&ic);
-    return env->NewStringUTF(hello.c_str());
-}
-extern "C"
-JNIEXPORT jboolean JNICALL
-Java_aplay_testffmpeg_MainActivity_Open(JNIEnv *env, jobject instance, jstring url_,
-                                        jobject handle) {
-    const char *url = env->GetStringUTFChars(url_, 0);
 
-    // TODO
-    FILE *fp = fopen(url,"rb");
-    if(!fp)
-    {
-        LOGW("File %s open failed!",url);
-    }
-    else
-    {
-        LOGW("File %s open succes!",url);
-        fclose(fp);
-    }
-    env->ReleaseStringUTFChars(url_, url);
-    return true;
+    env->ReleaseStringUTFChars(url_, path);
 }
