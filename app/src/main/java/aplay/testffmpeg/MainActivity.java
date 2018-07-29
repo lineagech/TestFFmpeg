@@ -17,7 +17,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate( savedInstanceState );
-        setContentView( R.layout.activity_main );
+        //setContentView( R.layout.activity_main );
 
         // Remove Title
         supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -28,11 +28,13 @@ public class MainActivity extends AppCompatActivity {
         // Horizontal
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE );
 
+        setContentView( R.layout.activity_main );
+
         // Example of a call to a native method
         TextView tv = (TextView) findViewById( R.id.sample_text );
         String str = "/sdcard/1080.mp4";
         //Open( str,this );
-        tv.setText( stringFromJNI() );
+        //tv.setText( stringFromJNI() );
     }
 
     /**

@@ -71,7 +71,7 @@ Java_aplay_testffmpeg_MainActivity_Open(JNIEnv *env, jobject instance, jstring u
 extern "C"
 JNIEXPORT void JNICALL
 Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jobject surface) {
-    //const char *path = env->GetStringUTFChars(url_, 0);
+    const char *path = env->GetStringUTFChars(url_, 0);
 
     // TODO
     /* Initialize all */
@@ -83,7 +83,7 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
 
     /* Open the file */
     AVFormatContext *ic = NULL; // AVFormatContext -> unpack strcut for flv, mp4, rmvb, avi
-    char path[] = "/sdcard/1080.mp4";
+    //char path[] = "/sdcard/1080.mp4";
 
     int re = avformat_open_input(&ic, path, 0, 0);
     if(re != 0)
@@ -195,6 +195,9 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
     SwsContext* vctx = NULL;
     int outWidth = 1280;
     int outHeight = 720;
+    long long start = GetNowMs();
+    int frameCount = 0;
+
 
     SwrContext* actx = swr_alloc();
     actx = swr_alloc_set_opts(
@@ -214,8 +217,6 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
         LOGW("swr_init success!");
     }
 
-    long long start = GetNowMs();
-    int frameCount = 0;
     char* rgb = new char[1920*1080*4];
     char* pcm = new char[48000*4*2];
 
@@ -224,7 +225,7 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
     ANativeWindow* nwin = ANativeWindow_fromSurface(env, surface);
     int vWidth = vc->width;
     int vHeight = vc->height;
-    ANativeWindow_setBuffersGeometry( nwin, vWidth, vHeight, WINDOW_FORMAT_RGBA_8888 );
+    ANativeWindow_setBuffersGeometry( nwin, outWidth, outWidth, WINDOW_FORMAT_RGBA_8888 );
     ANativeWindow_Buffer wbuf;
 
     for(;;)
