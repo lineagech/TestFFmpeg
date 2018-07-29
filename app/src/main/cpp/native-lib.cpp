@@ -3,6 +3,9 @@
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
+#include <SLES/OpenSLES.h>
+#include <SLES/OpenSLES_Android.h>
+
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,"testff",__VA_ARGS__)
 
 extern "C"{
@@ -15,9 +18,31 @@ extern "C"{
 #include<iostream>
 using namespace std;
 
+static SLObjectItf engineObject;
+
 static double r2d(AVRational r)
 {
     return r.num==0||r.den == 0 ? 0 :(double)r.num/(double)r.den;
+}
+
+SLEngineItf create_SLengine()
+{
+    int re;
+    SLEngineItf engineEngine;
+    // Create Engine Object
+    re = slCreateEngine(&engineObject, 0, NULL, 0, NULL, NULL);
+    assert( re == SL_RESULT_SUCCESS );
+
+    // Instantnitiate
+    re = (*engineObject)->Realize(engineObject, SL_BOOLEAN_FALSE);
+    assert( re == SL_RESULT_SUCCESS );
+
+    // Get Engine Interface
+    re = (*engineObject)->GetInterface(engineObject, SL_IID_ENGINE/*SLInterfaceID struct*/, &engineEngine);
+    assert( re == SL_RESULT_SUCCESS );
+
+    return engineEngine;
+
 }
 
 //当前时间戳 clock
