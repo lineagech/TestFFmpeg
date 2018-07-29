@@ -8,7 +8,7 @@
 extern "C"{
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libswsacle/swscale.h>
+#include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavcodec/jni.h>
 }
@@ -71,7 +71,7 @@ Java_aplay_testffmpeg_MainActivity_Open(JNIEnv *env, jobject instance, jstring u
 extern "C"
 JNIEXPORT void JNICALL
 Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jobject surface) {
-    const char *path = env->GetStringUTFChars(url_, 0);
+    //const char *path = env->GetStringUTFChars(url_, 0);
 
     // TODO
     /* Initialize all */
@@ -203,7 +203,7 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
             AV_SAMPLE_FMT_S16,
             ac->sample_rate,
             av_get_default_channel_layout(ac->channels),
-            ac->sample_format,
+            ac->sample_fmt,
             ac->sample_rate, 0, 0
     );
     re = swr_init(actx);
@@ -320,12 +320,14 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
                 uint8_t* out[2] = {0};
                 out[0] = (uint8_t*)pcm;
                 // Audio Resample
+                /*int swr_convert(struct SwrContext *s, uint8_t **out, int out_count,
+                                const uint8_t **in , int in_count); */
                 int len = swr_convert(
                         actx,
                         out,
                         frame->nb_samples, /* how many samples, usually 1024 */
-                        (const uint8_t*)frame->data,
-                        frame->nb_samples,
+                        (const uint8_t**)frame->data,
+                        frame->nb_samples
                 );
                 LOGW("swr_convert = %d", len);
             }
