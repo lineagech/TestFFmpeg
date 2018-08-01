@@ -7,6 +7,31 @@
 #include <SLES/OpenSLES_Android.h>
 
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,"testff",__VA_ARGS__)
+#define LOGD(...) __android_log_print(ANDROID_LOG_ERROR,"testff",__VA_ARGS__)
+
+void PcmCall( SLAndroidSimpleBufferQueueItf bf, void* context)
+{
+    LOGD("PcmCall");
+    static FILE* fp = NULL;
+    static char* buf = NULL;
+    if( !buf )
+    {
+        buf = new char[1024*1024];
+    }
+    if( !fp )
+    {
+        fp = fopen("/sdcard/test.pcm", "rb");
+    }
+    if( !fp ) return;
+    if( feof(fp) == 0 )
+    {
+        int len = fread( buf, 1, 1024, fp);
+        if( len > 0 )
+        {
+            (*bf)->Enqueue( bf, buf, len );
+        }
+    }
+}
 
 extern "C"{
 #include <libavcodec/avcodec.h>
@@ -25,9 +50,9 @@ static double r2d(AVRational r)
     return r.num==0||r.den == 0 ? 0 :(double)r.num/(double)r.den;
 }
 
-SLEngineItf create_SLengine()
+SLEngineItf createSL()
 {
-    int re;
+    SLresult re;
     SLEngineItf engineEngine;
     // Create Engine Object
     re = slCreateEngine(&engineObject, 0, NULL, 0, NULL, NULL);
@@ -42,6 +67,85 @@ SLEngineItf create_SLengine()
     assert( re == SL_RESULT_SUCCESS );
 
     return engineEngine;
+
+}
+
+void testSL()
+{
+    SLEngineItf eng = createSL();
+    if( eng ) LOGD("createSL success!");
+    else LOGD("createSL failed");
+
+    SLObjectItf mix = NULL;
+    SLresult re = 0;
+    re = (*eng)->CreateOuputMix( eng, &mix, 0, 0, 0 );
+    if( re != SL_RESULT_SUCCESS ) 
+        LOGD("CreateOuputMix failed!");
+    re = (*mix)->Realize( mix, SL_BOOLEAN_FALSE );
+    if( re != SL_RESULT_SUCCESS ) 
+        LOGD("(*mix)->Realize failed!");
+
+    SLDataLocator_OuputMix outmix = {SL_DATALOCATOR_OUTPUTMIX, mix};// store to play
+    SLDataSink audioSink = {&outmix, 0};
+
+    /* Config Audio Info */
+    SLDataLocator_AndroidSimpleBufferQueue queue
+            = { SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 10 };
+    SLDataFormat_PCM pcm
+            = { SL_DATAFORMAT_PCM,
+                2,
+                SL_SAMPLINGRATE_44_1,
+                SL_PCMSAMPLEFORMAT_FIXED_16,
+                SL_PCMSAMPLEFORMAT_FIXED_16,
+                SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_BACK_RIGHT,
+                SL_BYTEORDER_LITTLEENDIAN };
+
+    SLDataSource ds = { &queue, &pcm };
+
+    /* Create Player */
+    SLObjectItf player = NULL;
+    SLPlayItf iplayer = NULL;
+    SLAndroidSimpleBufferQueueItf pcm_queue = NULL;
+    const SLInterfaceID ids[] = {SL_IID_BUFFERQUEUE};
+    const SLboolean req[] = {SL_BOOLEAN_TRUE}; // Open Interface
+    re = (*eng)->CreateAudioPlayer(eng, &player, &ds, &audioSink,
+                                   sizeof(ids)/sizeof(SLInterfaceID),
+                                   ids,
+                                   req );
+    if( re != SL_RESULT_SUCCESS )
+    {
+        LOGD("CreateAudioPlayer Failed!");
+    } else{
+        LOGD("CreateAudioPlayer success!");
+    }
+    (*player)->Realize(player, SL_BOOLEAN_FALSE);
+
+    /* Get player interface */
+    re = (*player)->GetInterface( player, SL_IID_PLAY, &iplayer );
+    if( re != SL_RESULT_SUCCESS )
+    {
+        LOGD("GetInterface SL_IID_PLAY Failed!");
+    } else{
+        LOGD("GetInterface SL_IID_PLAY success!");
+    }
+
+    /* need to register first when createAudioPlayer */
+    re = (*player)->GetInterface( player, SL_IID_BUFFERQUEUE, &pcm_queue );
+    if( re != SL_RESULT_SUCCESS )
+    {
+        LOGD("GetInterface SL_IID_PLAY Failed!");
+    } else{
+        LOGD("GetInterface SL_IID_PLAY success!");
+    }
+
+    /* Set Callback function when queue is empty */
+    (*pcm_queue)->RegisterCallback( pcm_queue, PcmCall, 0 );
+
+    /* Set playing state */
+    (*iplayer)->SetPlayState(iplayer, SL_PLAYSTATE_PLAYING);
+
+    /* Enable callback */
+    (*pcm_queue)->Enqueue(pcm_queue, "", 1);
 
 }
 
