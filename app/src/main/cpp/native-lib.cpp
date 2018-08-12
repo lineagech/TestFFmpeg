@@ -5,6 +5,8 @@
 #include <android/native_window_jni.h>
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
 
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, "testff", __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_ERROR, "testff", __VA_ARGS__)
@@ -154,6 +156,7 @@ void testSL()
     /* Enable callback */
     (*pcm_queue)->Enqueue(pcm_queue, "", 1);
 }
+
 
 long long GetNowMs()
 {
@@ -468,4 +471,274 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
     avformat_close_input(&ic);
 
     env->ReleaseStringUTFChars(url_, path);
+}
+
+#define GET_STR(x) #x
+static const char *vertexShader = GET_STR(
+        attribute vec4 aPosition; // Vertex Coord
+        attribute vec2 aTexCoord; // Vertex's Texture Coord
+        varying vec2 vTexCoord;   // to Fragment shader, vertex texture coord
+        void main(){
+            vTexCoord = vec2(aTexCoord.x,1.0-aTexCoord.y);
+            gl_Position = aPosition;
+        }
+);
+
+//片元着色器,软解码和部分x86硬解码
+static const char *fragYUV420P = GET_STR(
+        precision mediump float;    // Set Precision
+        varying vec2 vTexCoord;     // from vertex shader, vertex textrure position
+        uniform sampler2D yTexture; // Texture sampler（single pixel）
+        uniform sampler2D uTexture;
+        uniform sampler2D vTexture;
+        void main(){
+            vec3 yuv;
+            vec3 rgb;
+            yuv.r = texture2D(yTexture,vTexCoord).r;
+            yuv.g = texture2D(uTexture,vTexCoord).r - 0.5;
+            yuv.b = texture2D(vTexture,vTexCoord).r - 0.5;
+            rgb = mat3(1.0,     1.0,    1.0,
+                       0.0,-0.39465,2.03211,
+                       1.13983,-0.58060,0.0)*yuv;
+            // Output
+            gl_FragColor = vec4(rgb,1.0);
+        }
+);
+
+GLuint InitShader(const char* code, GLint type)
+{
+    GLuint sh = glCreateShader(type);
+
+    glShaderSource(sh, 1, &code, 0);
+
+    glCompileShader(sh);
+
+    GLint success = 0;
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &success);
+    if( success == GL_FALSE)
+    {
+        LOGD("GL_COMPILE_STATUS: %d", success);
+        return 0;
+    }
+    LOGD("glCompileShader success!");
+    return sh;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_aplay_testffmpeg_XPlay_testGL(JNIEnv *env, jobject instance, jstring url_, jobject surface) {
+    const char *url = env->GetStringUTFChars(url_, 0);
+
+    FILE *fp = fopen(url,"rb");
+    if(!fp)
+    {
+        LOGD("open file %s failed!",url);
+        return;
+    }
+
+    /* EGL Display */
+    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if( display == EGL_NO_DISPLAY )
+    {
+        LOGD("eglGetDisplay failed");
+        return;
+    }
+
+    // Initialize Display
+    EGLBoolean re = eglInitialize(display, NULL, NULL);
+    if( re == EGL_FALSE )
+    {
+        LOGD("eglInitialize failed");
+        return;
+    }
+    EGLConfig config;
+    EGLint numConfig;
+    EGLint attrib_list[] = {
+            EGL_RED_SIZE, 8,
+            EGL_GREEN_SIZE, 8,
+            EGL_BLUE_SIZE, 8,
+            EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+            EGL_NONE
+    };
+    re = eglChooseConfig ( display,
+                           attrib_list,
+                           &config,
+                           1,
+                           &numConfig );
+    if( re == EGL_FALSE )
+    {
+        LOGD("eglChooseConfig failed");
+        return;
+    }
+
+    /* Surface : frame buffer */
+    ANativeWindow *nwin = ANativeWindow_fromSurface(env, surface);
+    EGLSurface surface = eglCreateWindowSurface( display, config, nwin, NULL );
+    if( surface == EGL_NO_SURFACE ) {
+        LOGD("eglCreateWindowSurface failed");
+        return;
+    }
+
+    /* Context: contains all of the state info required for operation,
+        e.g. it contains references to the vertex and fragment shaders and
+        the array of vertex data used in the program
+     */
+    EGLint ctx_attrib_list[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctx_attrib_list);
+    if( context == EGL_NO_CONTEXT )
+    {
+        LOGD("eglCreateContext failed");
+        return;
+    }
+
+    re = eglMakeCurrent(display, surface, surface, context);
+    if( re == EGL_FALSE )
+    {
+        LOGD("eglMakeCurrent failed");
+        return;
+    }
+
+    /* Init Shader */
+    GLuint vsh = InitShader(vertexShader, GL_VERTEX_SHADER);
+    GLuint fsh = InitShader(fragYUV420P, GL_FRAGMENT_SHADER);
+
+    /* Attach Shader */
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vsh);
+    glAttachShader(program, fsh);
+
+    /* Link the program */
+    glLinkProgram(program);
+
+    /* Check link status */
+    GLint isLinked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &isLinked);
+    if( isLinked == GL_FALSE  )
+    {
+        LOGD("glGetProgramiv failed");
+        GLint maxLen = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &maxLen);
+        std::vector<GLchar> infoLog(maxLen);
+        glGetProgramInfoLog(program, maxLen, &maxLen, &(infoLog[0]));
+
+        glDeleteProgram(program);
+        glDeleteShader(vsh);
+        glDeleteProgram(fsh);
+
+        return;
+    }
+
+    glUseProgram(program);
+
+    /* Vertex Data */
+    static float vers[] = {
+            1.0f,-1.0f,0.0f,
+            -1.0f,-1.0f,0.0f,
+            1.0f,1.0f,0.0f,
+            -1.0f,1.0f,0.0f
+    };
+
+    /* Get attribute from shader, only in vertex shader */
+    GLint apos = glGetAttribLocation(program, "aPosition");
+    /* Enable shader can read data from GPU(CPU) */
+    glEnableVertexAttribArray(apos);
+    glVertexAttribPointer(apos, 3, GL_FLOAT, GL_FALSE, 12, vers);
+
+    /* Texture Data */
+    static float txts[] = {
+            1.0f, 0.0f,
+            0.0f,0.0f,
+            1.0f,1.0f,
+            0.0,1.0
+    };
+    GLint aText = glGetAttribLocation(program, "aTexCoord");
+    glEnableVertexAttribArray(aText);
+    glVertexAttribPointer(aText, 2, GL_FLOAT, GL_FALSE, 8, txts);
+
+
+    int width = 424;
+    int height = 240;
+
+    /* Get uniform from shader and set texture sampler
+     * specify the value of a uniform variable for the current program object */
+    glUniform1i(glGetUniformLocation(program, "yTexture"), 0);
+    glUniform1i(glGetUniformLocation(program, "uTexture"), 1);
+    glUniform1i(glGetUniformLocation(program, "vTexture"), 2);
+
+    /* Get 3 texture layer */
+    GLuint texts[3] = {0};
+    glGenTextures(3, texts);
+
+    /* Set for texture 0*/
+    glBindTexture(GL_TEXTURE_2D, texts[0]); /*the following operation if only for texts[0]*/
+    glTexParameteri(GL_TEXTURE_2D,
+                    GL_TEXTURE_MIN_FILTER/*Specifies the symbolic name of a single-valued texture parameter.*/,
+                    GL_LINEAR/*the weighted average of the four texture elements that are closest to the specified texture coordinates*/);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, NULL/*Specifies a pointer to the image data in memory.*/);
+
+    /* Set for texture 1*/
+    glBindTexture(GL_TEXTURE_2D, texts[1]); /*the following operation if only for texts[0]*/
+    glTexParameteri(GL_TEXTURE_2D,
+                    GL_TEXTURE_MIN_FILTER/*Specifies the symbolic name of a single-valued texture parameter.*/,
+                    GL_LINEAR/*the weighted average of the four texture elements that are closest to the specified texture coordinates*/);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, NULL/*Specifies a pointer to the image data in memory.*/);
+
+    /* Set for texture 2*/
+    glBindTexture(GL_TEXTURE_2D, texts[2]); /*the following operation if only for texts[0]*/
+    glTexParameteri(GL_TEXTURE_2D,
+                    GL_TEXTURE_MIN_FILTER/*Specifies the symbolic name of a single-valued texture parameter.*/,
+                    GL_LINEAR/*the weighted average of the four texture elements that are closest to the specified texture coordinates*/);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width/2, height/2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, NULL/*Specifies a pointer to the image data in memory.*/);
+
+
+    /* Texture content modification */
+    unsigned char* buf[3] = {0}; /*yuv from file*/
+    buf[0] = new unsigned char[width*height];
+    buf[1] = new unsigned char[width*height/4];
+    buf[2] = new unsigned char[width*height/4];
+
+    for( int i=0; i<10000; i++ )
+    {
+        if( feof(fp)==0 )
+        {
+            fread(buf[0],1,width*height,fp);
+            fread(buf[1],1,width*height/4,fp);
+            fread(buf[2],1,width*height/4,fp);
+        }
+
+        /* Activate 0 texture */
+        glActiveTexture(GL_TEXTURE0);
+        /* Bind to texts[0] */
+        glBindTexture(GL_TEXTURE_2D, texts[0]);
+        /* Substitute content */
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf[0]);
+
+
+        /* Activate 1 texture */
+        glActiveTexture(GL_TEXTURE0);
+        /* Bind to texts[1] */
+        glBindTexture(GL_TEXTURE_2D, texts[1]);
+        /* Substitute content */
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf[1]);
+
+
+        /* Activate 2 texture */
+        glActiveTexture(GL_TEXTURE0);
+        /* Bind to texts[2] */
+        glBindTexture(GL_TEXTURE_2D, texts[2]);
+        /* Substitute content */
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf[2]);
+
+        /* Draw */
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        /* window display */
+        eglSwapBuffers(display, surface);
+
+    }
+
+    env->ReleaseStringUTFChars(url_, url);
 }

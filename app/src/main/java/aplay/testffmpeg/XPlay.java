@@ -13,7 +13,8 @@ public class XPlay extends GLSurfaceView implements Runnable, SurfaceHolder.Call
 
     @Override
     public void run(){
-        Open( "/sdcard/1080.mp4", getHolder().getSurface() );
+        //Open( "/sdcard/1080.mp4", getHolder().getSurface() );
+        testGL( "/sdcard/1080.mp4", getHolder().getSurface() );
     }
 
     @Override
@@ -32,4 +33,5 @@ public class XPlay extends GLSurfaceView implements Runnable, SurfaceHolder.Call
     }
 
     public native void Open( String url, Object surface );
+    public native void testGL(String url, Object surface);
 }
