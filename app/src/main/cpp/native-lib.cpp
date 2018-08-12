@@ -7,6 +7,7 @@
 #include <SLES/OpenSLES_Android.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
+#include <vector>
 
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, "testff", __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_ERROR, "testff", __VA_ARGS__)
@@ -96,11 +97,11 @@ void testSL()
     /* Config Audio Info */
     SLDataLocator_AndroidSimpleBufferQueue queue = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 10};
     SLDataFormat_PCM pcm = {SL_DATAFORMAT_PCM,
-                            2,
+                            1,
                             SL_SAMPLINGRATE_44_1,
                             SL_PCMSAMPLEFORMAT_FIXED_16,
                             SL_PCMSAMPLEFORMAT_FIXED_16,
-                            SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_BACK_RIGHT,
+                            SL_SPEAKER_FRONT_CENTER,
                             SL_BYTEORDER_LITTLEENDIAN};
 
     SLDataSource ds = {&queue, &pcm};
@@ -465,8 +466,8 @@ Java_aplay_testffmpeg_XPlay_Open(JNIEnv *env, jobject instance, jstring url_, jo
             }
         }
     }
-    delete rgb;
-    delete pcm;
+    delete[] rgb;
+    delete[] pcm;
 
     avformat_close_input(&ic);
 
@@ -529,6 +530,9 @@ JNIEXPORT void JNICALL
 Java_aplay_testffmpeg_XPlay_testGL(JNIEnv *env, jobject instance, jstring url_, jobject surface) {
     const char *url = env->GetStringUTFChars(url_, 0);
 
+    testSL();
+    return;
+
     FILE *fp = fopen(url,"rb");
     if(!fp)
     {
@@ -573,8 +577,8 @@ Java_aplay_testffmpeg_XPlay_testGL(JNIEnv *env, jobject instance, jstring url_, 
 
     /* Surface : frame buffer */
     ANativeWindow *nwin = ANativeWindow_fromSurface(env, surface);
-    EGLSurface surface = eglCreateWindowSurface( display, config, nwin, NULL );
-    if( surface == EGL_NO_SURFACE ) {
+    EGLSurface egl_surface = eglCreateWindowSurface( display, config, nwin, NULL );
+    if( egl_surface == EGL_NO_SURFACE ) {
         LOGD("eglCreateWindowSurface failed");
         return;
     }
@@ -591,7 +595,7 @@ Java_aplay_testffmpeg_XPlay_testGL(JNIEnv *env, jobject instance, jstring url_, 
         return;
     }
 
-    re = eglMakeCurrent(display, surface, surface, context);
+    re = eglMakeCurrent(display, egl_surface, egl_surface, context);
     if( re == EGL_FALSE )
     {
         LOGD("eglMakeCurrent failed");
@@ -618,7 +622,7 @@ Java_aplay_testffmpeg_XPlay_testGL(JNIEnv *env, jobject instance, jstring url_, 
         LOGD("glGetProgramiv failed");
         GLint maxLen = 0;
         glGetProgramiv(program, GL_INFO_LOG_LENGTH, &maxLen);
-        std::vector<GLchar> infoLog(maxLen);
+        std::vector<GLchar> infoLog(maxLen, 0);
         glGetProgramInfoLog(program, maxLen, &maxLen, &(infoLog[0]));
 
         glDeleteProgram(program);
